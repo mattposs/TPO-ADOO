@@ -1,311 +1,533 @@
-﻿const API_BASE = 'http://localhost:8081';
+﻿/**
+ * app.js - eScrims Frontend Application
+ *
+ * SPA sin frameworks. Maneja autenticacion, creacion y busqueda de scrims,
+ * y todas las acciones sobre scrims (iniciar, cancelar, finalizar, postularse).
+ *
+ * La API_BASE esta vacia porque nginx sirve el frontend en el mismo origen
+ * (puerto 8080) y hace proxy de /api/ al backend en puerto 8081.
+ */
+
+// =============================================================================
+// CONFIGURACION
+// =============================================================================
+
+/** Base URL de la API. Vacia = mismo origen (nginx hace proxy a :8081). */
+const API_BASE = '';
+
+// =============================================================================
+// ESTADO GLOBAL
+// =============================================================================
+
+/** Token JWT del usuario autenticado. Null si no hay sesion. */
+let authToken = null;
+
+/** Nombre de usuario logueado, para mostrar en la UI. */
 let currentUser = null;
 
-document.addEventListener('DOMContentLoaded', () => {
-  const saved = sessionStorage.getItem('escrims_user');
-  if (saved) { currentUser = JSON.parse(saved); enterApp(); }
+// =============================================================================
+// UTILIDADES HTTP
+// =============================================================================
 
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.auth-form').forEach(f => f.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById(`${btn.dataset.tab}-form`).classList.add('active');
-    });
-  });
+/**
+ * Realiza una peticion HTTP a la API.
+ *
+ * @param {string} path   - Ruta relativa, ej: '/api/scrims'
+ * @param {string} method - Metodo HTTP: 'GET', 'POST', etc.
+ * @param {object} [body] - Cuerpo JSON opcional (para POST/PUT)
+ * @returns {Promise<any>} Datos deserializados de la respuesta JSON
+ * @throws {Error} Si el servidor devuelve un status >= 400
+ */
+async function apiCall(path, method = 'GET', body = null) {
+    const headers = { 'Content-Type': 'application/json' };
 
-  document.querySelectorAll('.nav-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById(`section-${btn.dataset.section}`).classList.add('active');
-      onSectionChange(btn.dataset.section);
-    });
-  });
+    // Adjuntar JWT si el usuario esta autenticado
+    if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+    }
 
-  document.getElementById('login-form').addEventListener('submit', handleLogin);
-  document.getElementById('register-form').addEventListener('submit', handleRegister);
-  document.getElementById('logout-btn').addEventListener('click', logout);
+    const options = { method, headers };
+    if (body) {
+        options.body = JSON.stringify(body);
+    }
 
-  document.querySelectorAll('.modal-overlay').forEach(overlay => {
-    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.add('hidden'); });
-  });
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') document.querySelectorAll('.modal-overlay').forEach(m => m.classList.add('hidden'));
-  });
-});
+    const response = await fetch(`${API_BASE}${path}`, options);
 
-function onSectionChange(section) {
-  if (section === 'stats') loadStats();
-  if (section === 'profile') loadProfile();
-  if (section === 'my-lobbies') loadMyLobbies();
+    // Leer el cuerpo una sola vez para poder mostrarlo en errores
+    const text = await response.text();
+
+    if (!response.ok) {
+        // Intentar parsear el mensaje de error del backend
+        let msg = `Error ${response.status}`;
+        try {
+            const err = JSON.parse(text);
+            msg = err.message || err.error || msg;
+        } catch (_) {
+            if (text) msg = text;
+        }
+        throw new Error(msg);
+    }
+
+    // Devolver null si la respuesta esta vacia (ej: 204 No Content)
+    if (!text) return null;
+
+    return JSON.parse(text);
 }
 
-async function api(path, options = {}) {
-  const url = `${API_BASE}${path}`;
-  const opts = { headers: { 'Content-Type': 'application/json', ...options.headers }, ...options };
-  if (opts.body && typeof opts.body === 'object') opts.body = JSON.stringify(opts.body);
-  try {
-    const res = await fetch(url, opts);
-    const text = await res.text();
-    let data; try { data = JSON.parse(text); } catch { data = text; }
-    if (!res.ok) { const msg = (typeof data === 'object' && (data.message || data.error)) || text || `HTTP ${res.status}`; throw new Error(msg); }
-    return data;
-  } catch (err) {
-    if (err.name === 'TypeError' && err.message.includes('fetch')) throw new Error('No se puede conectar al servidor. ¿Está corriendo el backend?');
-    throw err;
-  }
+// =============================================================================
+// UTILIDADES DE UI
+// =============================================================================
+
+/**
+ * Muestra u oculta una seccion por su ID.
+ * Solo una seccion es visible a la vez (estilo SPA).
+ *
+ * @param {string} sectionId - ID del elemento a mostrar
+ */
+function showSection(sectionId) {
+    // Ocultar todas las secciones principales
+    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+
+    // Mostrar la seccion solicitada
+    const target = document.getElementById(sectionId);
+    if (target) target.classList.add('active');
 }
 
-async function handleLogin(e) {
-  e.preventDefault();
-  const errEl = document.getElementById('login-error');
-  errEl.classList.add('hidden');
-  const username = document.getElementById('login-username').value.trim();
-  const password = document.getElementById('login-password').value;
-  try {
-    const data = await api('/auth/login', { method: 'POST', body: { username, password } });
-    currentUser = { username, ...(typeof data === 'object' ? data : {}) };
-    sessionStorage.setItem('escrims_user', JSON.stringify(currentUser));
-    enterApp();
-    toast('success', `¡Bienvenido de vuelta, ${username}!`);
-  } catch (err) { errEl.textContent = err.message; errEl.classList.remove('hidden'); }
+/**
+ * Muestra un mensaje de feedback (exito o error) dentro de un contenedor.
+ *
+ * @param {string} containerId - ID del div donde mostrar el mensaje
+ * @param {string} message     - Texto a mostrar
+ * @param {'success'|'error'} type - Tipo de mensaje (afecta el color)
+ */
+function showMessage(containerId, message, type = 'success') {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    container.textContent = message;
+    container.className = `message ${type}`;
+    container.style.display = 'block';
+
+    // Auto-ocultar despues de 4 segundos
+    setTimeout(() => {
+        container.style.display = 'none';
+    }, 4000);
 }
 
-async function handleRegister(e) {
-  e.preventDefault();
-  const errEl = document.getElementById('register-error');
-  const okEl = document.getElementById('register-success');
-  errEl.classList.add('hidden'); okEl.classList.add('hidden');
-  const body = {
-    username: document.getElementById('reg-username').value.trim(),
-    password: document.getElementById('reg-password').value,
-    region: document.getElementById('reg-region').value,
-    platform: document.getElementById('reg-platform').value,
-    visibleRank: document.getElementById('reg-visible-rank').value,
-    rank: parseInt(document.getElementById('reg-rank').value) || 1000,
-    preferredRole: document.getElementById('reg-role').value,
-    availability: document.getElementById('reg-availability').value,
-  };
-  try {
-    await api('/auth/register', { method: 'POST', body });
-    okEl.textContent = '¡Cuenta creada! Ya podés iniciar sesión.';
-    okEl.classList.remove('hidden');
-    document.getElementById('register-form').reset();
-    setTimeout(() => document.querySelector('[data-tab="login"]').click(), 1200);
-  } catch (err) { errEl.textContent = err.message; errEl.classList.remove('hidden'); }
+/**
+ * Muestra u oculta el overlay de carga global.
+ *
+ * @param {boolean} show - true para mostrar, false para ocultar
+ */
+function setLoading(show) {
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) {
+        overlay.style.display = show ? 'flex' : 'none';
+    }
 }
 
-function enterApp() {
-  document.getElementById('auth-screen').classList.remove('active');
-  document.getElementById('app-screen').classList.add('active');
-  document.getElementById('nav-username').textContent = currentUser.username || 'Jugador';
-  loadProfile();
+// =============================================================================
+// AUTENTICACION
+// =============================================================================
+
+/**
+ * Registra un nuevo usuario.
+ * Lee los campos del formulario #register-form y llama a POST /api/auth/register.
+ */
+async function register() {
+    const username = document.getElementById('reg-username').value.trim();
+    const email    = document.getElementById('reg-email').value.trim();
+    const password = document.getElementById('reg-password').value;
+
+    // Validacion basica en frontend
+    if (!username || !email || !password) {
+        showMessage('register-msg', 'Completa todos los campos.', 'error');
+        return;
+    }
+
+    setLoading(true);
+    try {
+        await apiCall('/api/auth/register', 'POST', { username, email, password });
+        showMessage('register-msg', 'Registro exitoso! Ya podes iniciar sesion.', 'success');
+
+        // Pre-llenar el campo de login con el usuario recien registrado
+        document.getElementById('login-identifier').value = username;
+        setTimeout(() => showSection('login-section'), 1500);
+    } catch (err) {
+        showMessage('register-msg', err.message, 'error');
+    } finally {
+        setLoading(false);
+    }
 }
 
+/**
+ * Inicia sesion con usuario y password.
+ * Guarda el JWT en authToken y actualiza la UI al estado autenticado.
+ */
+async function login() {
+    const identifier = document.getElementById('login-identifier').value.trim();
+    const password   = document.getElementById('login-password').value;
+
+    if (!identifier || !password) {
+        showMessage('login-msg', 'Ingresa usuario y password.', 'error');
+        return;
+    }
+
+    setLoading(true);
+    try {
+        // El backend acepta 'identifier' (puede ser username o email)
+        const data = await apiCall('/api/auth/login', 'POST', { identifier, password });
+
+        // Guardar token y usuario en estado global
+        authToken   = data.token;
+        currentUser = identifier;
+
+        // Actualizar header con nombre de usuario
+        document.getElementById('user-display').textContent = identifier;
+
+        // Mostrar navbar autenticada y pasar al dashboard
+        document.getElementById('main-nav').style.display = 'flex';
+        document.getElementById('auth-nav').style.display  = 'none';
+        showSection('dashboard-section');
+        loadDashboard();
+    } catch (err) {
+        showMessage('login-msg', err.message, 'error');
+    } finally {
+        setLoading(false);
+    }
+}
+
+/**
+ * Cierra la sesion del usuario.
+ * Limpia el estado global y vuelve a la pantalla de login.
+ */
 function logout() {
-  currentUser = null;
-  sessionStorage.removeItem('escrims_user');
-  document.getElementById('app-screen').classList.remove('active');
-  document.getElementById('auth-screen').classList.add('active');
-  toast('info', 'Sesión cerrada');
+    authToken   = null;
+    currentUser = null;
+
+    // Volver a mostrar navegacion de invitado
+    document.getElementById('main-nav').style.display = 'none';
+    document.getElementById('auth-nav').style.display  = 'flex';
+    showSection('login-section');
 }
 
-async function searchLobbies() {
-  const region = document.getElementById('filter-region').value || undefined;
-  const minRank = document.getElementById('filter-min-rank').value || undefined;
-  const maxRank = document.getElementById('filter-max-rank').value || undefined;
-  const maxPing = document.getElementById('filter-max-ping').value || undefined;
-  const params = new URLSearchParams();
-  if (region) params.append('region', region);
-  if (minRank) params.append('minRank', minRank);
-  if (maxRank) params.append('maxRank', maxRank);
-  if (maxPing) params.append('maxPing', maxPing);
-  const list = document.getElementById('lobbies-list');
-  list.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div></div>';
-  try {
-    const data = await api(`/findLobbies?${params.toString()}`);
-    renderLobbies(list, Array.isArray(data) ? data : (data.lobbies || []), false);
-  } catch (err) {
-    list.innerHTML = `<div class="empty-state"><div class="empty-icon"></div><p>${err.message}</p></div>`;
-    toast('error', err.message);
-  }
+// =============================================================================
+// DASHBOARD
+// =============================================================================
+
+/**
+ * Carga el dashboard: muestra estadisticas y los ultimos scrims disponibles.
+ * Se llama automaticamente despues del login.
+ */
+async function loadDashboard() {
+    setLoading(true);
+    try {
+        // Traer todos los scrims para calcular estadisticas
+        const scrims = await apiCall('/api/scrims');
+
+        // Calcular metricas para las tarjetas del dashboard
+        const total  = scrims.length;
+        const open   = scrims.filter(s => s.estado === 'ABIERTO'  || s.estado === 'OPEN').length;
+        const active = scrims.filter(s => s.estado === 'EN_CURSO' || s.estado === 'ACTIVE').length;
+
+        document.getElementById('stat-total').textContent  = total;
+        document.getElementById('stat-open').textContent   = open;
+        document.getElementById('stat-active').textContent = active;
+
+        // Mostrar los 5 scrims mas recientes en el feed del dashboard
+        const feed = document.getElementById('recent-scrims');
+        if (scrims.length === 0) {
+            feed.innerHTML = '<p class="empty-state">No hay scrims disponibles aun.</p>';
+        } else {
+            feed.innerHTML = scrims
+                .slice(-5)           // Ultimos 5
+                .reverse()           // Mas nuevo primero
+                .map(renderScrimCard)
+                .join('');
+        }
+    } catch (err) {
+        console.error('Error cargando dashboard:', err);
+    } finally {
+        setLoading(false);
+    }
 }
 
-async function loadMyLobbies() {
-  const list = document.getElementById('my-lobbies-list');
-  list.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div></div>';
-  try {
+// =============================================================================
+// CREAR SCRIM
+// =============================================================================
+
+/**
+ * Crea un nuevo scrim con los datos del formulario #create-scrim-form.
+ * Llama a POST /api/scrims.
+ */
+async function createScrim() {
+    // Leer todos los campos del formulario
+    const juego       = document.getElementById('scrim-juego').value.trim();
+    const region      = document.getElementById('scrim-region').value.trim();
+    const rangoMin    = parseInt(document.getElementById('scrim-rango-min').value) || 0;
+    const rangoMax    = parseInt(document.getElementById('scrim-rango-max').value) || 100;
+    const latenciaMax = parseInt(document.getElementById('scrim-latencia').value)  || 150;
+    const descripcion = document.getElementById('scrim-descripcion').value.trim();
+
+    if (!juego || !region) {
+        showMessage('create-msg', 'Juego y region son obligatorios.', 'error');
+        return;
+    }
+
+    setLoading(true);
+    try {
+        await apiCall('/api/scrims', 'POST', {
+            juego,
+            region,
+            rangoMin,
+            rangoMax,
+            latenciaMax,
+            descripcion
+        });
+
+        showMessage('create-msg', 'Scrim creado con exito!', 'success');
+
+        // Limpiar formulario
+        ['scrim-juego','scrim-region','scrim-rango-min','scrim-rango-max',
+         'scrim-latencia','scrim-descripcion'].forEach(id => {
+            document.getElementById(id).value = '';
+        });
+
+        // Recargar dashboard para reflejar el nuevo scrim
+        loadDashboard();
+    } catch (err) {
+        showMessage('create-msg', err.message, 'error');
+    } finally {
+        setLoading(false);
+    }
+}
+
+// =============================================================================
+// BUSCAR SCRIMS
+// =============================================================================
+
+/**
+ * Busca scrims aplicando los filtros del formulario.
+ * Llama a GET /api/scrims con query params opcionales.
+ */
+async function findScrims() {
+    // Construir query string solo con los filtros que el usuario completo
     const params = new URLSearchParams();
-    if (currentUser?.username) params.append('host', currentUser.username);
-    const data = await api(`/findLobbies?${params.toString()}`);
-    renderLobbies(list, Array.isArray(data) ? data : (data.lobbies || []), true);
-  } catch (err) {
-    list.innerHTML = `<div class="empty-state"><div class="empty-icon"></div><p>${err.message}</p></div>`;
-    toast('error', err.message);
-  }
+
+    const region      = document.getElementById('find-region').value.trim();
+    const rangoMin    = document.getElementById('find-rango-min').value.trim();
+    const rangoMax    = document.getElementById('find-rango-max').value.trim();
+    const latenciaMax = document.getElementById('find-latencia').value.trim();
+
+    if (region)      params.append('region',      region);
+    if (rangoMin)    params.append('rangoMin',     rangoMin);
+    if (rangoMax)    params.append('rangoMax',     rangoMax);
+    if (latenciaMax) params.append('latenciaMax',  latenciaMax);
+
+    const query = params.toString() ? `?${params.toString()}` : '';
+
+    setLoading(true);
+    try {
+        const scrims = await apiCall(`/api/scrims${query}`);
+        renderScrimList(scrims, 'find-results');
+    } catch (err) {
+        showMessage('find-msg', err.message, 'error');
+    } finally {
+        setLoading(false);
+    }
 }
 
-function renderLobbies(container, lobbies, isOwner) {
-  if (!lobbies.length) { container.innerHTML = '<div class="empty-state"><div class="empty-icon"></div><p>No se encontraron lobbies</p></div>'; return; }
-  container.innerHTML = lobbies.map(l => {
-    const filled = l.players ? l.players.length : 0;
-    const max = l.maxPlayers || 10;
-    const pct = Math.round((filled / max) * 100);
-    const status = l.status?.toLowerCase() || 'open';
-    return `<div class="lobby-card" onclick="openLobbyDetail(${JSON.stringify(l).replace(/"/g, '&quot;')})">
-      <div class="lobby-card-header"><span class="lobby-game-mode">${l.gameMode || '?v?'}</span><span class="lobby-status-badge status-${status}">${statusLabel(status)}</span></div>
-      <div class="lobby-map"> ${l.map || 'Sin mapa'}  ${l.region || ''}</div>
-      <div class="lobby-meta">
-        <div class="lobby-meta-item"><span class="lobby-meta-label">MMR:</span><span class="lobby-meta-value">${l.minRank ?? ''}${l.maxRank ?? ''}</span></div>
-        <div class="lobby-meta-item"><span class="lobby-meta-label">Ping máx:</span><span class="lobby-meta-value">${l.maxPing ?? ''} ms</span></div>
-        <div class="lobby-meta-item"><span class="lobby-meta-label">Host:</span><span class="lobby-meta-value">${l.host?.username || l.host || ''}</span></div>
-        <div class="lobby-meta-item"><span class="lobby-meta-label">Hora:</span><span class="lobby-meta-value">${formatTime(l.scheduledTime)}</span></div>
-      </div>
-      <div class="lobby-card-footer">
-        <div><div class="players-count">${filled} / ${max} jugadores</div><div class="players-bar"><div class="players-fill" style="width:${pct}%"></div></div></div>
-        ${isOwner && status === 'open' ? `<button class="btn btn-danger btn-sm" onclick="event.stopPropagation();cancelLobby(${l.id})">Cancelar</button>` : ''}
-        ${isOwner && status === 'open' ? `<button class="btn btn-success btn-sm" onclick="event.stopPropagation();openStartScrim(${l.id},'${l.gameMode}','${l.map}')">Iniciar</button>` : ''}
-      </div></div>`;
-  }).join('');
+/**
+ * Renderiza una lista de scrims dentro de un contenedor.
+ *
+ * @param {Array}  scrims      - Array de objetos scrim del backend
+ * @param {string} containerId - ID del div donde renderizar
+ */
+function renderScrimList(scrims, containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    if (!scrims || scrims.length === 0) {
+        container.innerHTML = '<p class="empty-state">No se encontraron scrims con esos filtros.</p>';
+        return;
+    }
+
+    container.innerHTML = scrims.map(renderScrimCard).join('');
 }
 
-function statusLabel(s) {
-  const map = { open:'Abierto', started:'En juego', finished:'Finalizado', cancelled:'Cancelado', lobbyarmado:'Lobby armado', confirmado:'Confirmado', enjuego:'En juego', buscando:'Buscando' };
-  return map[s] || s;
-}
-function formatTime(dt) {
-  if (!dt) return '';
-  try { return new Date(dt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }); } catch { return dt; }
-}
+/**
+ * Genera el HTML de una tarjeta de scrim.
+ *
+ * @param {object} scrim - Objeto scrim del backend
+ * @returns {string} HTML de la tarjeta
+ */
+function renderScrimCard(scrim) {
+    // Mapear estados del backend a clases CSS y etiquetas legibles
+    const estadoMap = {
+        'ABIERTO':   { label: 'Abierto',   css: 'open'     },
+        'OPEN':      { label: 'Abierto',   css: 'open'     },
+        'EN_CURSO':  { label: 'En Curso',  css: 'active'   },
+        'ACTIVE':    { label: 'En Curso',  css: 'active'   },
+        'CANCELADO': { label: 'Cancelado', css: 'cancelled'},
+        'FINALIZADO':{ label: 'Finalizado',css: 'finished' },
+    };
 
-function openLobbyDetail(lobby) {
-  const content = document.getElementById('lobby-detail-content');
-  const actions = document.getElementById('lobby-detail-actions');
-  document.getElementById('detail-modal-title').textContent = `Lobby #${lobby.id}  ${lobby.gameMode || ''}`;
-  const players = lobby.players || [];
-  const isHost = lobby.host?.username === currentUser?.username || lobby.host === currentUser?.username;
-  const status = lobby.status?.toLowerCase() || 'open';
-  content.innerHTML = `
-    <div class="detail-section"><div class="detail-section-title">Información del lobby</div>
-      <div class="detail-grid">
-        <div class="detail-item"><div class="detail-label">Modo</div><div class="detail-value">${lobby.gameMode || ''}</div></div>
-        <div class="detail-item"><div class="detail-label">Mapa</div><div class="detail-value">${lobby.map || ''}</div></div>
-        <div class="detail-item"><div class="detail-label">Región</div><div class="detail-value">${lobby.region || ''}</div></div>
-        <div class="detail-item"><div class="detail-label">Estado</div><div class="detail-value"><span class="lobby-status-badge status-${status}">${statusLabel(status)}</span></div></div>
-        <div class="detail-item"><div class="detail-label">MMR requerido</div><div class="detail-value">${lobby.minRank ?? ''}  ${lobby.maxRank ?? ''}</div></div>
-        <div class="detail-item"><div class="detail-label">Ping máximo</div><div class="detail-value">${lobby.maxPing ?? ''} ms</div></div>
-        <div class="detail-item"><div class="detail-label">Jugadores</div><div class="detail-value">${players.length} / ${lobby.maxPlayers || ''}</div></div>
-        <div class="detail-item"><div class="detail-label">Host</div><div class="detail-value">${lobby.host?.username || lobby.host || ''}</div></div>
-        <div class="detail-item"><div class="detail-label">Hora programada</div><div class="detail-value">${formatTime(lobby.scheduledTime)}</div></div>
-      </div></div>
-    <div class="detail-section"><div class="detail-section-title">Jugadores (${players.length})</div>
-      <div class="players-list">${players.length ? players.map(p => `<div class="player-item"><span class="player-name">${p.username || p}</span><span class="player-rank">${p.visibleRank || ''} ${p.rank ? ' ' + p.rank + ' MMR' : ''}</span></div>`).join('') : '<p style="color:var(--text-2);font-size:.875rem">Sin jugadores aún</p>'}</div>
-    </div>`;
-  actions.innerHTML = `
-    <button class="btn btn-ghost" onclick="closeModal('lobby-detail-modal')">Cerrar</button>
-    ${!isHost && status === 'open' ? `<button class="btn btn-primary" onclick="postularse(${lobby.id})">Postularse</button>` : ''}
-    ${isHost && status === 'open' ? `<button class="btn btn-danger" onclick="cancelLobby(${lobby.id});closeModal('lobby-detail-modal')">Cancelar Lobby</button>` : ''}
-    ${isHost && status === 'open' ? `<button class="btn btn-success" onclick="openStartScrim(${lobby.id},'${lobby.gameMode}','${lobby.map}');closeModal('lobby-detail-modal')">Iniciar Scrim</button>` : ''}
-    ${status === 'started' || status === 'enjuego' ? `<button class="btn btn-warning" onclick="finishScrim(${lobby.id})">Finalizar Scrim</button>` : ''}`;
-  openModal('lobby-detail-modal');
-}
+    const estado = estadoMap[scrim.estado] || { label: scrim.estado || 'Desconocido', css: 'open' };
 
-async function createLobby() {
-  const errEl = document.getElementById('create-lobby-error');
-  errEl.classList.add('hidden');
-  const body = {
-    region: document.getElementById('lobby-region').value,
-    gameMode: document.getElementById('lobby-game-mode').value,
-    map: document.getElementById('lobby-map').value || 'TBD',
-    minPlayers: parseInt(document.getElementById('lobby-min-players').value) || 2,
-    maxPlayers: parseInt(document.getElementById('lobby-max-players').value) || 10,
-    minRank: parseInt(document.getElementById('lobby-min-rank').value) || 0,
-    maxRank: parseInt(document.getElementById('lobby-max-rank').value) || 9999,
-    maxPing: parseInt(document.getElementById('lobby-max-ping').value) || 150,
-    scheduledTime: document.getElementById('lobby-scheduled-time').value || new Date().toISOString(),
-    hostUsername: currentUser?.username,
-  };
-  try {
-    await api('/createLobby', { method: 'POST', body });
-    closeModal('create-lobby-modal');
-    document.getElementById('create-lobby-form').reset();
-    toast('success', '¡Lobby creado exitosamente!');
-    document.querySelector('[data-section="my-lobbies"]').click();
-  } catch (err) { errEl.textContent = err.message; errEl.classList.remove('hidden'); }
+    // Botones de accion segun el estado actual del scrim
+    let actionButtons = '';
+    const id = scrim.id;
+
+    if (estado.css === 'open') {
+        actionButtons = `
+            <button class="btn btn-sm btn-success" onclick="postularse(${id})">Postularse</button>
+            <button class="btn btn-sm btn-primary" onclick="iniciarScrim(${id})">Iniciar</button>
+            <button class="btn btn-sm btn-danger"  onclick="cancelarScrim(${id})">Cancelar</button>
+        `;
+    } else if (estado.css === 'active') {
+        actionButtons = `
+            <button class="btn btn-sm btn-accent"  onclick="finalizarScrim(${id})">Finalizar</button>
+            <button class="btn btn-sm btn-danger"  onclick="cancelarScrim(${id})">Cancelar</button>
+        `;
+    }
+
+    return `
+        <div class="scrim-card">
+            <div class="scrim-header">
+                <span class="scrim-game">${escapeHtml(scrim.juego || 'Sin juego')}</span>
+                <span class="scrim-status ${estado.css}">${estado.label}</span>
+            </div>
+            <div class="scrim-details">
+                <span>Region: ${escapeHtml(scrim.region || '-')}</span>
+                <span>Rango: ${scrim.rangoMin ?? '-'} - ${scrim.rangoMax ?? '-'}</span>
+                <span>Latencia max: ${scrim.latenciaMax ?? '-'} ms</span>
+            </div>
+            ${scrim.descripcion ? `<p class="scrim-desc">${escapeHtml(scrim.descripcion)}</p>` : ''}
+            <div class="scrim-actions">${actionButtons}</div>
+        </div>
+    `;
 }
 
-async function cancelLobby(id) {
-  if (!confirm('¿Seguro que querés cancelar este lobby?')) return;
-  try { await api(`/${id}/cancelLobby`, { method: 'POST' }); toast('info', 'Lobby cancelado'); loadMyLobbies(); }
-  catch (err) { toast('error', err.message); }
+/**
+ * Escapa caracteres HTML para prevenir XSS.
+ *
+ * @param {string} str - Texto a escapar
+ * @returns {string} Texto seguro para insertar en HTML
+ */
+function escapeHtml(str) {
+    if (typeof str !== 'string') return String(str ?? '');
+    return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
 }
 
-function openStartScrim(lobbyId, gameMode, map) {
-  document.getElementById('scrim-lobby-id').value = lobbyId;
-  document.getElementById('scrim-game-mode').value = gameMode || '5v5';
-  document.getElementById('scrim-map').value = map || '';
-  openModal('start-scrim-modal');
+// =============================================================================
+// ACCIONES SOBRE SCRIMS
+// =============================================================================
+
+/**
+ * Postula al usuario actual a un scrim.
+ * Llama a POST /api/scrims/{id}/postulaciones.
+ *
+ * @param {number} id - ID del scrim
+ */
+async function postularse(id) {
+    setLoading(true);
+    try {
+        await apiCall(`/api/scrims/${id}/postulaciones`, 'POST');
+        showMessage('find-msg', 'Postulacion enviada!', 'success');
+        findScrims(); // Refrescar lista
+    } catch (err) {
+        showMessage('find-msg', err.message, 'error');
+    } finally {
+        setLoading(false);
+    }
 }
 
-async function startScrim() {
-  const errEl = document.getElementById('start-scrim-error');
-  errEl.classList.add('hidden');
-  const body = { lobbyId: parseInt(document.getElementById('scrim-lobby-id').value), gameMode: document.getElementById('scrim-game-mode').value, map: document.getElementById('scrim-map').value || 'TBD' };
-  try { await api('/startScrim', { method: 'POST', body }); closeModal('start-scrim-modal'); toast('success', '¡Scrim iniciado! ¡Buena suerte!'); loadMyLobbies(); }
-  catch (err) { errEl.textContent = err.message; errEl.classList.remove('hidden'); }
+/**
+ * Inicia un scrim (cambia estado a EN_CURSO).
+ * Llama a POST /api/scrims/{id}/iniciar.
+ *
+ * @param {number} id - ID del scrim
+ */
+async function iniciarScrim(id) {
+    setLoading(true);
+    try {
+        await apiCall(`/api/scrims/${id}/iniciar`, 'POST');
+        showMessage('find-msg', 'Scrim iniciado!', 'success');
+        findScrims();
+        loadDashboard();
+    } catch (err) {
+        showMessage('find-msg', err.message, 'error');
+    } finally {
+        setLoading(false);
+    }
 }
 
-async function finishScrim(id) {
-  if (!confirm('¿Finalizar este scrim?')) return;
-  try { await api(`/${id}/finishScrim`, { method: 'POST' }); toast('success', 'Scrim finalizado'); closeModal('lobby-detail-modal'); loadMyLobbies(); }
-  catch (err) { toast('error', err.message); }
+/**
+ * Cancela un scrim.
+ * Llama a POST /api/scrims/{id}/cancelar.
+ *
+ * @param {number} id - ID del scrim
+ */
+async function cancelarScrim(id) {
+    if (!confirm('Cancelar este scrim?')) return;
+    setLoading(true);
+    try {
+        await apiCall(`/api/scrims/${id}/cancelar`, 'POST');
+        showMessage('find-msg', 'Scrim cancelado.', 'success');
+        findScrims();
+        loadDashboard();
+    } catch (err) {
+        showMessage('find-msg', err.message, 'error');
+    } finally {
+        setLoading(false);
+    }
 }
 
-async function postularse(lobbyId) {
-  try {
-    await api(`/${lobbyId}/postulaciones`, { method: 'POST', body: { playerUsername: currentUser?.username, rolDeseado: currentUser?.preferredRole || 'FLEX' } });
-    closeModal('lobby-detail-modal');
-    toast('success', '¡Te postulaste al lobby!');
-  } catch (err) { toast('error', err.message); }
+/**
+ * Finaliza un scrim (cambia estado a FINALIZADO).
+ * Llama a POST /api/scrims/{id}/finalizar.
+ *
+ * @param {number} id - ID del scrim
+ */
+async function finalizarScrim(id) {
+    setLoading(true);
+    try {
+        await apiCall(`/api/scrims/${id}/finalizar`, 'POST');
+        showMessage('find-msg', 'Scrim finalizado!', 'success');
+        findScrims();
+        loadDashboard();
+    } catch (err) {
+        showMessage('find-msg', err.message, 'error');
+    } finally {
+        setLoading(false);
+    }
 }
 
-async function loadStats() {
-  if (!currentUser) return;
-  const u = currentUser;
-  document.getElementById('stat-games').textContent = u.gamesPlayed ?? '0';
-  document.getElementById('stat-wins').textContent = u.wins ?? '0';
-  document.getElementById('stat-losses').textContent = u.losses ?? '0';
-  document.getElementById('stat-kda').textContent = u.kda ?? '';
-  document.getElementById('stat-mmr').textContent = u.rank ?? '';
-  const games = parseInt(u.gamesPlayed) || 0;
-  const wins = parseInt(u.wins) || 0;
-  document.getElementById('stat-wr').textContent = games > 0 ? Math.round((wins / games) * 100) + '%' : '';
-}
+// =============================================================================
+// INICIALIZACION
+// =============================================================================
 
-async function loadProfile() {
-  if (!currentUser) return;
-  const u = currentUser;
-  document.getElementById('profile-username').textContent = u.username || '';
-  document.getElementById('profile-avatar-letter').textContent = (u.username || '?')[0].toUpperCase();
-  document.getElementById('profile-rank-badge').textContent = u.visibleRank || '';
-  document.getElementById('profile-region-badge').textContent = u.region || '';
-  document.getElementById('profile-platform').textContent = u.platform || '';
-  document.getElementById('profile-role').textContent = u.preferredRole || '';
-  document.getElementById('profile-availability').textContent = u.availability || '';
-  document.getElementById('profile-mmr').textContent = u.rank ? `${u.rank} MMR` : '';
-}
+/**
+ * Se ejecuta cuando el DOM esta listo.
+ * Muestra la pantalla de login por defecto y conecta los handlers del formulario.
+ */
+document.addEventListener('DOMContentLoaded', () => {
+    // Pantalla inicial: login
+    showSection('login-section');
 
-function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
-function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+    // Permitir submit con Enter en los formularios de auth
+    ['login-identifier', 'login-password'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+    });
 
-function toast(type, message) {
-  const icons = { success: '', error: '', info: '?', warning: '' };
-  const el = document.createElement('div');
-  el.className = `toast toast-${type}`;
-  el.innerHTML = `<span>${icons[type] || '?'}</span><span>${message}</span>`;
-  document.getElementById('toast-container').appendChild(el);
-  setTimeout(() => { el.style.transition = 'opacity .3s,transform .3s'; el.style.opacity = '0'; el.style.transform = 'translateX(100%)'; setTimeout(() => el.remove(), 300); }, 3500);
-}
-
+    ['reg-username', 'reg-email', 'reg-password'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('keydown', e => { if (e.key === 'Enter') register(); });
+    });
+});

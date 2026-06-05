@@ -80,3 +80,5 @@
         condition: service_healthy
       observability:
         condition: service_started
+    networks:
+      - default
