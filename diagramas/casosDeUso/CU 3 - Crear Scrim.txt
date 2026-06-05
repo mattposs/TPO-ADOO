@@ -1,0 +1,31 @@
+@startuml
+actor "Organizador" as Org
+control "ScrimService" as Service
+control "ScrimBuilder" as Builder
+control "GameValidator\n(Template Method)" as Validator
+entity "Scrim" as Model
+database "PostgreSQL" as DB
+control "Kafka" as Kafka
+
+Org -> Service : POST /api/scrims (json payload) crearScrim(dto)
+Service -> Builder : new ScrimBuilder()
+
+Builder -> Builder : juego(dto.juego)
+Builder -> Builder : rango(dto.min, dto.max)
+Builder -> Builder : formato(dto.formato, dto.roles)
+Builder -> Builder : fecha(dto.fechaHora)
+
+Service -> Builder : build()
+Builder -> Validator : validateComposition(tempData)
+Validator --> Builder : validation OK
+
+Builder --> Model : new Scrim(validData)
+Model -> Model : setState(new BuscandoState())
+Builder --> Service : scrimInstance
+
+Service -> DB : save(scrimInstance)
+DB --> Service : savedScrim
+Service -> Kafka : publish(new ScrimCreadoEvent(savedScrim.id))
+Service --> API : 201 Created (Scrim ID)
+API --> Org : Confirmation JSON
+@enduml

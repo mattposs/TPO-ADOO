@@ -1,0 +1,34 @@
+@startuml
+control "Cron Scheduler" as Cron
+control "MatchmakingEngine" as Engine
+entity "ScrimContext" as Context
+control "MatchmakingStrategy" as Strategy
+database "PostgreSQL" as DB
+control "DomainEventBus" as EventBus
+
+Cron -> Engine : ejecutarCicloEmparejamiento()
+Engine -> DB : findScrimsEnEstado(BuscandoState)
+DB --> Engine : List<Scrim>
+
+loop Para cada Scrim activo
+    Engine -> DB : fetchCandidatos(scrim.id, limit=500)
+    DB --> Engine : List<Usuario> candidatos
+    
+    Engine -> Context : getMatchmakingStrategy()
+    Context --> Engine : currentStrategy (ej. ByMMRStrategy)
+    
+    Engine -> Strategy : seleccionar(candidatos, scrim)
+    Strategy -> Strategy : applyHeuristics(MMR, Ping, Historial)
+    Strategy --> Engine : List<Usuario> seleccionados
+    
+    alt seleccionados.size() == scrim.cuposRequeridos
+        Engine -> Context : setJugadoresAEquipos(seleccionados)
+        Engine -> Context : setState(new LobbyArmadoState())
+        
+        Context -> EventBus : publish(new LobbyArmadoEvent(scrim.id, seleccionados))
+        Engine -> DB : update(scrim)
+    else Candidatos insuficientes
+        Engine -> Engine : continue (mantener en Buscando)
+    end
+end
+@enduml

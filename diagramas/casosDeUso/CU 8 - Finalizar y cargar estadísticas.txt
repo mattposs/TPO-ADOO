@@ -1,0 +1,25 @@
+@startuml
+actor "Organizador / Bot" as Org
+control "ScrimService" as Service
+entity "ScrimContext" as Context
+entity "EnJuegoState" as State
+database "PostgreSQL" as DB
+control "MMRRecalculator" as Recalculator
+
+Org -> Service : POST /api/scrims/{id}/finalizar finalizarScrim(scrimId)
+Service -> Context : finalizar()
+Context -> State : finalizar(this)
+State -> Context : setState(new FinalizadoState())
+Context --> Service : 200 OK
+
+== Carga de Estadísticas ==
+Org -> Service : POST /api/scrims/{id}/estadisticas (JSON Array) procesarEstadisticas(dataList)
+
+loop Para cada jugador
+    Service -> DB : save(new Estadistica(kda, mvp))
+    Service -> Recalculator : recalcularMMR(userId, kda_ratio, win)
+    Recalculator -> DB : update(Usuario.rangoPorJuego)
+end
+
+Service --> API : 201 Created
+@enduml

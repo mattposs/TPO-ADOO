@@ -1,0 +1,31 @@
+@startuml
+control "Cron Scheduler" as Cron
+control "ScrimService" as Service
+entity "ScrimContext" as Context
+entity "ConfirmadoState" as State
+control "DomainEventBus" as EventBus
+boundary "NotifierFactory" as Factory
+boundary "DiscordAdapter" as Discord
+boundary "ICalAdapter" as ICal
+
+Cron -> Service : checkPartidasPorIniciar(LocalDateTime.now())
+Service -> DB : findScrimsToStart(currentTime)
+DB --> Service : List<Scrim>
+
+loop Para cada Scrim confirmada
+    Service -> Context : iniciar()
+    Context -> State : iniciar(this)
+    State -> Context : setState(new EnJuegoState())
+    Context -> EventBus : publish(new PartidaIniciadaEvent(scrimId, payload))
+end
+
+== Asynchronous Event Handling ==
+EventBus -> Factory : createChatNotifier()
+Factory --> EventBus : discordNotifier
+EventBus -> Discord : send(Notificacion)
+Discord -> Discord : buildWebhookJSON()
+Discord -> "Discord API" : HTTP POST Webhook
+
+EventBus -> ICal : generateEvent()
+ICal -> "User Calendar" : Sync via Adapter
+@enduml

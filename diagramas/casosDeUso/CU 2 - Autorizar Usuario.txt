@@ -1,0 +1,29 @@
+@startuml
+actor "Usuario" as User
+control "AuthService\n(Rate Limiter)" as Auth
+database "PostgreSQL" as DB
+
+User -> Auth : POST /api/auth/login (email, pass)
+Auth -> Auth : Check Rate Limits
+Auth -> Auth : authenticate(email, pass)
+Auth -> DB : findByEmail(email)
+DB --> Auth : userRecord
+
+alt userRecord == null
+    Auth --> API : NotFoundException
+    API --> User : 401 Unauthorized
+else Check Status
+    Auth -> Auth : checkBannedStatus(userRecord.strikes)
+end
+
+Auth -> Auth : verifyHash(pass, userRecord.passwordHash)
+
+alt Hash matches
+    Auth -> Auth : generateJWT(userRecord.id, userRecord.roles)
+    Auth --> API : JWT Token
+    API --> User : 200 OK (Bearer Token)
+else Hash mismatch
+    Auth --> API : Unauthorized Exception
+    API --> User : 401 Unauthorized
+end
+@enduml

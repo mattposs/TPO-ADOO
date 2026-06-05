@@ -1,0 +1,28 @@
+@startuml
+control "Message Queue\n(Kafka/RabbitMQ)" as Queue
+control "NotificationSubscriber" as Sub
+database "UserPreferences" as DB
+boundary "NotifierFactory\n(Prod/Dev)" as Factory
+boundary "FirebaseAdapter\n(Push)" as Push
+boundary "SendGridAdapter\n(Email)" as Email
+
+Queue -> Sub : dequeue(DomainEvent e)
+Sub -> DB : fetchUserPreferences(e.getTargetUsers())
+DB --> Sub : Map<User, Config>
+
+loop Para cada usuario
+    alt Push Habilitado
+        Sub -> Factory : createPushNotifier()
+        Factory --> Sub : PushNotifier (FirebaseAdapter)
+        Sub -> Push : send(payload)
+        Push -> "Firebase API" : POST /fcm/send
+    end
+
+    alt Email Habilitado
+        Sub -> Factory : createEmailNotifier()
+        Factory --> Sub : EmailNotifier (SendGridAdapter)
+        Sub -> Email : send(payload)
+        Email -> "SendGrid API" : POST /mail/send
+    end
+end
+@enduml

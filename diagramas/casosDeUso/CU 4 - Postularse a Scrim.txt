@@ -1,0 +1,36 @@
+@startuml
+actor "Jugador" as Player
+control "ScrimService" as Service
+entity "ScrimContext" as Context
+entity "BuscandoState" as State
+database "PostgreSQL" as DB
+
+Player -> Service : POST /api/scrims/{id}/postulaciones registrarPostulacion(userId, scrimId, rol)
+Service -> DB : getScrimAndUser(scrimId, userId)
+DB --> Service : scrim, user
+
+Service -> Context : postular(user, rol)
+Context -> State : postular(this, user, rol)
+
+State -> State : validarLimites(user.getMMR(), ctx.rangoMin/Max)
+State -> State : validarLatencia(user.region, ctx.region)
+
+alt Validaciones Exitosas
+    State -> DB : save(new Postulacion(user, scrim, rol))
+    
+    State -> Context : evaluarCapacidad()
+    alt cuposActuales == cuposRequeridos
+        Context -> Context : setState(new LobbyArmadoState())
+    end
+    
+    State --> Context : success
+    Context --> Service : OK
+    Service --> API : 201 Created
+    API --> Player : Postulación Registrada
+else Validación Fallida (ej. Rango Hierro en partida Oro)
+    State --> Context : Exception(Violación de Restricciones)
+    Context --> Service : Error
+    Service --> API : 400 Bad Request
+    API --> Player : Error: Rango Insuficiente
+end
+@enduml

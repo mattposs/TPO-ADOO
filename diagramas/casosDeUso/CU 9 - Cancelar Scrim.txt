@@ -1,0 +1,27 @@
+@startuml
+actor "Organizador" as Org
+control "ScrimService" as Service
+entity "ScrimContext" as Context
+entity "ConfirmadoState" as State
+control "ModerationService" as Mod
+database "PostgreSQL" as DB
+control "DomainEventBus" as EventBus
+
+Org -> Service : POST /api/scrims/{id}/cancelar (motivo) cancelar(scrimId, motivo)
+Service -> Context : cancelar(motivo)
+
+Context -> State : cancelar(this, motivo)
+State -> State : evaluateTimingPenalty()
+
+alt Cancelación tardía
+    State -> Mod : applyStrikeToOrganizer(ctx.organizador)
+    Mod -> DB : incrementStrikes()
+end
+
+State -> Context : setState(new CanceladoState())
+State -> DB : updateStatus(CANCELADO)
+
+Context -> EventBus : publish(new ScrimCanceladaEvent(scrimId, motivo, jugadores))
+Context --> Service : 200 OK
+Service --> Org : Scrim Cancelada Exitosamente
+@enduml

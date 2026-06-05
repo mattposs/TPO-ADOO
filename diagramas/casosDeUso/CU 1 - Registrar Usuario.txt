@@ -1,0 +1,29 @@
+@startuml
+actor "Jugador" as User
+control "AuthService" as Auth
+control "Mock OAuthProvider" as OAuth
+entity "Usuario" as Model
+database "PostgreSQL" as DB
+boundary "EmailAdapter" as Email
+
+User -> Auth : POST /api/auth/register (payload) processRegistration(dto)
+
+alt Standard Registration
+    Auth -> Auth : validateUniqueness(dto.email)
+    Auth -> Auth : hashPassword(dto.password)
+    Auth -> Model : new Usuario(hash, dto.region)
+    Model --> Auth : userInstance
+    Auth -> DB : save(userInstance)
+    DB --> Auth : savedUser
+    Auth -> Email : sendVerificationEmail(dto.email, token)
+    Email --> Auth : async OK
+else OAuth Integration
+    Auth -> OAuth : redirect()
+    OAuth --> Auth : callback(OAuthToken, ProfileData)
+    Auth -> Model : new Usuario(ProfileData, state=Verificado)
+    Auth -> DB : save(OAuthUser)
+end
+
+Auth --> API : 201 Created (status: Pendiente/Verificado)
+API --> User : Registration Success JSON
+@enduml

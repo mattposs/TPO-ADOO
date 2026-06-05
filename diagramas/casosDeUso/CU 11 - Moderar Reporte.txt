@@ -1,0 +1,37 @@
+@startuml
+actor "Moderador" as Mod
+control "ReportService" as Service
+control "ModerationChain" as Chain
+control "AutoResolverNode" as Auto
+control "BotAnalyzerNode" as Bot
+control "HumanModNode" as Human
+entity "Report" as Model
+database "PostgreSQL" as DB
+
+Mod -> Service : POST /api/scrims/{id}/reportes
+Service -> Service : validateReport(reportingPlayer, reportedPlayer)
+Service -> Chain : initiateChain(report)
+
+Chain -> Auto : handle(report)
+Auto -> Auto : checks AFK/LEAVER in logs
+alt Auto-resolvable
+    Auto -> Model : markResolved("ADMIN_AUTO")
+    Auto -> DB : save(report)
+    DB --> Service : ok
+else Escalate to Bot
+    Auto -> Bot : passToNext(report)
+    Bot -> Bot : analyzePatterns (repeat offender?)
+    alt Pattern detected
+        Bot -> Model : markResolved("BOT_SANCTIONED")
+        Bot -> DB : save(report)
+    else Escalate to Human
+        Bot -> Human : passToNext(report)
+        Human -> Human : manualReview + decisionMaking
+        Human -> Model : markResolved("HUMAN_MOD", sanction)
+        Human -> DB : save(report)
+    end
+end
+
+Service --> Mod : ReportConfirmation (estado, accion)
+
+@enduml

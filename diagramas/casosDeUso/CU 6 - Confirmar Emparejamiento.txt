@@ -1,0 +1,34 @@
+@startuml
+actor "Jugador" as Player
+actor "Organizador" as Org
+control "ScrimService" as Service
+control "CommandExecutor" as Invoker
+entity "ScrimContext" as Context
+entity "LobbyArmadoState" as State
+database "PostgreSQL" as DB
+control "DomainEventBus" as EventBus
+
+== Flujo de Swap de Roles (Command Pattern) ==
+Org -> Service : POST /api/scrims/{id}/acciones/swap processCommand(SwapJugadores)
+Service -> Invoker : execute(new SwapJugadoresCommand(u1, u2))
+Invoker -> Context : executeSwap()
+Context -> DB : updateRoles()
+
+== Flujo de Confirmación Estándar ==
+Player -> Service : POST /api/scrims/{id}/confirmaciones registrarConfirmacion(userId)
+Service -> Context : confirmar(user)
+Context -> State : confirmar(this, user)
+
+State -> DB : save(new Confirmacion(user, true))
+State -> DB : countConfirmacionesActuales(ctx.id)
+DB --> State : total
+
+alt total == ctx.cuposRequeridos
+    State -> Context : setState(new ConfirmadoState())
+    Context -> EventBus : publish(new ConfirmadoEvent(ctx.id))
+    State --> Context : transition OK
+end
+
+Context --> Service : success
+Service --> Player : UI Update: Esperando a otros...
+@enduml

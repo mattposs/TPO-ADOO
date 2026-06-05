@@ -1,0 +1,160 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>eScrims  Plataforma de Scrims</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="auth-screen" class="screen active">
+    <div class="auth-container">
+      <div class="logo-area">
+        <div class="logo-icon"></div>
+        <h1 class="logo-text">eScrims</h1>
+        <p class="logo-sub">Plataforma de Scrims Competitivos</p>
+      </div>
+      <div class="auth-tabs">
+        <button class="tab-btn active" data-tab="login">Iniciar Sesión</button>
+        <button class="tab-btn" data-tab="register">Registrarse</button>
+      </div>
+      <form id="login-form" class="auth-form active">
+        <div class="field-group">
+          <label>Usuario</label>
+          <input type="text" id="login-username" placeholder="tu_username" required />
+        </div>
+        <div class="field-group">
+          <label>Contraseña</label>
+          <input type="password" id="login-password" placeholder="" required />
+        </div>
+        <button type="submit" class="btn btn-primary btn-full">Entrar</button>
+        <p id="login-error" class="error-msg hidden"></p>
+      </form>
+      <form id="register-form" class="auth-form">
+        <div class="fields-grid">
+          <div class="field-group"><label>Usuario</label><input type="text" id="reg-username" placeholder="tu_username" required /></div>
+          <div class="field-group"><label>Contraseña</label><input type="password" id="reg-password" placeholder="" required /></div>
+          <div class="field-group"><label>Región</label><select id="reg-region"><option value="SA">Sudamérica</option><option value="NA">Norteamérica</option><option value="EU">Europa</option><option value="AS">Asia</option></select></div>
+          <div class="field-group"><label>Plataforma</label><select id="reg-platform"><option value="PC">PC</option><option value="PS5">PlayStation</option><option value="XBOX">Xbox</option></select></div>
+          <div class="field-group"><label>Rango visible</label><select id="reg-visible-rank"><option value="IRON">Iron</option><option value="BRONZE">Bronze</option><option value="SILVER">Silver</option><option value="GOLD">Gold</option><option value="PLATINUM">Platinum</option><option value="DIAMOND">Diamond</option><option value="MASTER">Master</option><option value="GRANDMASTER">Grandmaster</option><option value="CHALLENGER">Challenger</option></select></div>
+          <div class="field-group"><label>MMR</label><input type="number" id="reg-rank" placeholder="1500" min="0" max="9999" /></div>
+          <div class="field-group"><label>Rol preferido</label><select id="reg-role"><option value="TOP">Top</option><option value="JUNGLE">Jungle</option><option value="MID">Mid</option><option value="BOT">Bot / ADC</option><option value="SUPPORT">Support</option><option value="FLEX">Flex</option></select></div>
+          <div class="field-group"><label>Disponibilidad</label><input type="text" id="reg-availability" placeholder="Noches y fines de semana" /></div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-full">Crear cuenta</button>
+        <p id="register-error" class="error-msg hidden"></p>
+        <p id="register-success" class="success-msg hidden"></p>
+      </form>
+    </div>
+  </div>
+  <div id="app-screen" class="screen">
+    <nav class="navbar">
+      <div class="nav-brand"><span class="logo-icon-sm"></span><span>eScrims</span></div>
+      <div class="nav-links">
+        <button class="nav-btn active" data-section="lobbies">Lobbies</button>
+        <button class="nav-btn" data-section="my-lobbies">Mis Lobbies</button>
+        <button class="nav-btn" data-section="stats">Estadísticas</button>
+        <button class="nav-btn" data-section="profile">Perfil</button>
+      </div>
+      <div class="nav-user">
+        <span id="nav-username" class="username-badge"></span>
+        <button id="logout-btn" class="btn btn-ghost btn-sm">Salir</button>
+      </div>
+    </nav>
+    <main class="main-content">
+      <section id="section-lobbies" class="section active">
+        <div class="section-header">
+          <div><h2>Explorar Lobbies</h2><p class="section-sub">Encontrá scrims compatibles con tu perfil</p></div>
+          <button class="btn btn-primary" onclick="openModal('create-lobby-modal')">+ Crear Lobby</button>
+        </div>
+        <div class="filter-bar">
+          <div class="field-group-inline"><label>Región</label><select id="filter-region"><option value="">Todas</option><option value="SA">Sudamérica</option><option value="NA">Norteamérica</option><option value="EU">Europa</option><option value="AS">Asia</option></select></div>
+          <div class="field-group-inline"><label>Rango mín.</label><input type="number" id="filter-min-rank" placeholder="0" /></div>
+          <div class="field-group-inline"><label>Rango máx.</label><input type="number" id="filter-max-rank" placeholder="9999" /></div>
+          <div class="field-group-inline"><label>Ping máx. (ms)</label><input type="number" id="filter-max-ping" placeholder="150" /></div>
+          <button class="btn btn-secondary" onclick="searchLobbies()">Buscar</button>
+        </div>
+        <div id="lobbies-list" class="cards-grid"><div class="empty-state"><div class="empty-icon"></div><p>Buscá lobbies usando los filtros de arriba</p></div></div>
+      </section>
+      <section id="section-my-lobbies" class="section">
+        <div class="section-header">
+          <div><h2>Mis Lobbies</h2><p class="section-sub">Lobbies que creaste o en los que participás</p></div>
+          <button class="btn btn-secondary" onclick="loadMyLobbies()"> Actualizar</button>
+        </div>
+        <div id="my-lobbies-list" class="cards-grid"><div class="empty-state"><div class="empty-icon"></div><p>No tenés lobbies activos</p></div></div>
+      </section>
+      <section id="section-stats" class="section">
+        <div class="section-header"><div><h2>Estadísticas</h2><p class="section-sub">Tu rendimiento en scrims</p></div></div>
+        <div id="stats-container">
+          <div class="stats-grid">
+            <div class="stat-card"><div class="stat-value" id="stat-games"></div><div class="stat-label">Partidas jugadas</div></div>
+            <div class="stat-card"><div class="stat-value" id="stat-wins"></div><div class="stat-label">Victorias</div></div>
+            <div class="stat-card"><div class="stat-value" id="stat-losses"></div><div class="stat-label">Derrotas</div></div>
+            <div class="stat-card"><div class="stat-value" id="stat-kda"></div><div class="stat-label">KDA</div></div>
+            <div class="stat-card"><div class="stat-value" id="stat-wr"></div><div class="stat-label">Win Rate</div></div>
+            <div class="stat-card"><div class="stat-value" id="stat-mmr"></div><div class="stat-label">MMR</div></div>
+          </div>
+          <div id="scrim-stats-section" class="mt-4 hidden"><h3 class="subsection-title">Estadísticas de Scrim</h3><div id="scrim-stats-detail"></div></div>
+        </div>
+      </section>
+      <section id="section-profile" class="section">
+        <div class="section-header"><div><h2>Mi Perfil</h2><p class="section-sub">Tu información de jugador</p></div></div>
+        <div class="profile-card">
+          <div class="profile-avatar"><span id="profile-avatar-letter">?</span></div>
+          <div class="profile-info"><h3 id="profile-username"></h3><div class="profile-badges"><span id="profile-rank-badge" class="rank-badge"></span><span id="profile-region-badge" class="region-badge"></span></div></div>
+          <div class="profile-details">
+            <div class="detail-row"><span class="detail-label">Plataforma</span><span id="profile-platform"></span></div>
+            <div class="detail-row"><span class="detail-label">Rol preferido</span><span id="profile-role"></span></div>
+            <div class="detail-row"><span class="detail-label">Disponibilidad</span><span id="profile-availability"></span></div>
+            <div class="detail-row"><span class="detail-label">MMR</span><span id="profile-mmr"></span></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div id="create-lobby-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header"><h3>Crear Lobby</h3><button class="modal-close" onclick="closeModal('create-lobby-modal')"></button></div>
+      <form id="create-lobby-form" class="modal-body">
+        <div class="fields-grid">
+          <div class="field-group"><label>Región</label><select id="lobby-region"><option value="SA">Sudamérica</option><option value="NA">Norteamérica</option><option value="EU">Europa</option><option value="AS">Asia</option></select></div>
+          <div class="field-group"><label>Modo de juego</label><select id="lobby-game-mode"><option value="1v1">1v1</option><option value="3v3">3v3</option><option value="5v5">5v5</option></select></div>
+          <div class="field-group"><label>Mapa</label><input type="text" id="lobby-map" placeholder="Ascent, Dust2..." /></div>
+          <div class="field-group"><label>Jugadores mín.</label><input type="number" id="lobby-min-players" placeholder="2" min="2" max="10" /></div>
+          <div class="field-group"><label>Jugadores máx.</label><input type="number" id="lobby-max-players" placeholder="10" min="2" max="10" /></div>
+          <div class="field-group"><label>Rango mínimo (MMR)</label><input type="number" id="lobby-min-rank" placeholder="0" /></div>
+          <div class="field-group"><label>Rango máximo (MMR)</label><input type="number" id="lobby-max-rank" placeholder="9999" /></div>
+          <div class="field-group"><label>Ping máximo (ms)</label><input type="number" id="lobby-max-ping" placeholder="150" /></div>
+          <div class="field-group span-2"><label>Fecha y hora</label><input type="datetime-local" id="lobby-scheduled-time" /></div>
+        </div>
+        <p id="create-lobby-error" class="error-msg hidden"></p>
+      </form>
+      <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('create-lobby-modal')">Cancelar</button><button class="btn btn-primary" onclick="createLobby()">Crear Lobby</button></div>
+    </div>
+  </div>
+  <div id="lobby-detail-modal" class="modal-overlay hidden">
+    <div class="modal modal-wide">
+      <div class="modal-header"><h3 id="detail-modal-title">Detalle del Lobby</h3><button class="modal-close" onclick="closeModal('lobby-detail-modal')"></button></div>
+      <div class="modal-body" id="lobby-detail-content"></div>
+      <div class="modal-footer" id="lobby-detail-actions"></div>
+    </div>
+  </div>
+  <div id="start-scrim-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header"><h3>Iniciar Scrim</h3><button class="modal-close" onclick="closeModal('start-scrim-modal')"></button></div>
+      <form id="start-scrim-form" class="modal-body">
+        <p class="modal-desc">Iniciá el scrim para el lobby seleccionado.</p>
+        <input type="hidden" id="scrim-lobby-id" />
+        <div class="fields-grid">
+          <div class="field-group"><label>Modo de juego</label><select id="scrim-game-mode"><option value="1v1">1v1</option><option value="3v3">3v3</option><option value="5v5">5v5</option></select></div>
+          <div class="field-group"><label>Mapa</label><input type="text" id="scrim-map" placeholder="Ascent, Dust2..." /></div>
+        </div>
+        <p id="start-scrim-error" class="error-msg hidden"></p>
+      </form>
+      <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('start-scrim-modal')">Cancelar</button><button class="btn btn-success" onclick="startScrim()">Iniciar Scrim</button></div>
+    </div>
+  </div>
+  <div id="toast-container"></div>
+  <script src="app.js"></script>
+</body>
+</html>
