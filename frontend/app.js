@@ -1,4 +1,4 @@
-﻿const API_BASE = 'http://localhost:8080';
+﻿const API_BASE = 'http://localhost:8081';
 let currentUser = null;
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -301,10 +301,11 @@ function openModal(id) { document.getElementById(id).classList.remove('hidden');
 function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 
 function toast(type, message) {
-  const icons = { success: '', error: '', info: 'ℹ', warning: '' };
+  const icons = { success: '', error: '', info: '?', warning: '' };
   const el = document.createElement('div');
   el.className = `toast toast-${type}`;
-  el.innerHTML = `<span>${icons[type] || 'ℹ'}</span><span>${message}</span>`;
+  el.innerHTML = `<span>${icons[type] || '?'}</span><span>${message}</span>`;
   document.getElementById('toast-container').appendChild(el);
   setTimeout(() => { el.style.transition = 'opacity .3s,transform .3s'; el.style.opacity = '0'; el.style.transform = 'translateX(100%)'; setTimeout(() => el.remove(), 300); }, 3500);
 }
+
